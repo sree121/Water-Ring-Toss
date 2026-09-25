@@ -1,4 +1,8 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Water Ring Toss</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -10,7 +14,7 @@
   --line:rgba(214,232,244,.14); --sun:#ffd23f; --shell:#f2b705; --good:#5fd38a;
   --key:#233a48; --key-hi:#2d4a5b;
 }
-html,body{height:100%}
+html,body{height:100%; margin:0}
 body{
   background:radial-gradient(120% 90% at 30% 15%, var(--desk-hi), var(--desk) 62%);
   background-color:var(--desk);
@@ -40,6 +44,7 @@ h1{
   width:22px; height:22px; border-radius:50%; box-sizing:border-box;
   border:5px solid var(--c); opacity:.35; transition:opacity .2s, transform .2s;
 }
+.tally.balls span{border-width:11px}
 .tally span.on{opacity:1; transform:scale(1.08); box-shadow:0 0 0 2px rgba(255,255,255,.12)}
 .times{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:0}
 .times div{border-top:1px solid var(--line); padding-top:8px}
@@ -48,6 +53,11 @@ h1{
 .status{margin:0; min-height:3em; color:var(--ink)}
 .status.win{color:var(--good); font-weight:700}
 .actions{display:flex; gap:8px; flex-wrap:wrap}
+.modes{display:flex; gap:4px; padding:4px; background:var(--key); border:1px solid var(--line); border-radius:12px}
+.modes button{flex:1; background:transparent; border:0; border-radius:9px; padding:10px 8px; color:var(--muted)}
+.modes button:hover{background:var(--key-hi); color:var(--ink)}
+.modes button:active{transform:none; border-bottom-width:0}
+.modes button[aria-pressed="true"]{background:var(--sun); color:#2a1c00}
 button{
   font:700 14px/1 Figtree, system-ui, sans-serif; color:var(--ink);
   background:var(--key); border:1px solid var(--line); border-bottom-width:3px;
@@ -77,6 +87,8 @@ kbd{
   .big{font-size:44px}
 }
 </style>
+</head>
+<body>
 
 <main class="wrap">
   <div class="toybox">
@@ -86,8 +98,12 @@ kbd{
     <div>
       <h1>Water Ring Toss</h1>
     </div>
-    <p class="lede">Pump the jets, let the rings drift down, and hook all eight onto the two pegs.</p>
-    <div class="score"><span class="big" id="onPegs">0</span><span class="of">of 8 on the pegs</span></div>
+    <div class="modes" role="group" aria-label="Game type">
+      <button id="modeRings" aria-pressed="true">Rings on pegs</button>
+      <button id="modeBalls" aria-pressed="false">Balls in buckets</button>
+    </div>
+    <p class="lede" id="lede">Pump the jets, let the rings drift down, and hook all eight onto the two pegs.</p>
+    <div class="score"><span class="big" id="onPegs">0</span><span class="of" id="ofText">of 8 on the pegs</span></div>
     <div class="tally" id="tally" aria-hidden="true"></div>
     <dl class="times">
       <div><dt>Time</dt><dd id="time">0:00.0</dd></div>
@@ -116,6 +132,7 @@ kbd{
       <li><b>The pump stroke.</b> A quick tap gives a short, weak puff. Holding pushes the full stroke and a strong jet. Letting go draws a little water back in.</li>
       <li><b>Live water.</b> A fluid solver runs in the tank, so each jet curls into eddies that keep carrying rings after the press ends.</li>
       <li><b>Real hooking.</b> Each ring is a 3D torus. It only counts when a peg runs through its hole, so rings can glance off the tip or get blasted back off.</li>
+      <li><b>Balls and buckets.</b> The balls are solid spheres that sink a little faster than the rings. The buckets are clear, open cups, so a ball can bounce off the rim or get lifted back out by a strong jet.</li>
     </ul>
   </aside>
 </main>
@@ -131,20 +148,26 @@ const M = 1, ID = M * R * R / 2, IN = M * R * R;
 const G_W = 90, G_A = 981;                  // effective gravity under water / in air
 const K = 3000, CD = 22, MU = 0.35, CF = 12, KB = 0.5, VMAX = 170, WMAX = 60;
 const UMAX = 390;                           // peak jet speed
-const FLOOR0 = 0.45, FS = 0.42;
+const FLOOR0 = 0.45, FS = 0.5, MU_FLOOR = 0.15;
 const NOZ = [
   { x: 1.7, dx: Math.sin(0.13), dy: Math.cos(0.13) },
   { x: W - 1.7, dx: -Math.sin(0.13), dy: Math.cos(0.13) }
 ];
-const PEG_R = 0.13, PED_R = 0.42, COL_R = 1.2, COL_T = 0.13;
-const PEGS = [{ x: 4.3, col: 6.0, tip: 9.6 }, { x: W - 4.3, col: 6.0, tip: 9.6 }];
+const PEG_R = 0.13, ARM_R = 0.17, COL_R = 0.98, COL_T = 0.13, CONE_S = 0.55, MU_CONE = 0.12;
+// the platform under each needle is a shallow cone: rings on the needle stack on it, anything else slides off
+const coneTop=pg=>pg.col+COL_T, coneEdge=pg=>pg.col+COL_T-CONE_S*COL_R, coneUnder=pg=>pg.col+COL_T-CONE_S*COL_R-2*COL_T;
+const PEGS = [{ x: 3.9, col: 6.0, tip: 9.6 }, { x: W - 3.9, col: 6.0, tip: 9.6 }];
 const A_AIR = W * 0.5;
 const SB = 0.2;                             // oblique view: camera slightly above
 const RC = [[255,198,36],[255,198,36],[62,196,92],[62,196,92],[255,86,152],[255,86,152],[58,138,255],[58,138,255]];
 const WATER = [36,138,172];
 
-function floorAt(x){ const d1=x-NOZ[0].x, d2=x-NOZ[1].x; const d=Math.abs(d1)<Math.abs(d2)?d1:d2; return FLOOR0+FS*Math.abs(d); }
-function floorSlope(x){ const d1=x-NOZ[0].x, d2=x-NOZ[1].x; const d=Math.abs(d1)<Math.abs(d2)?d1:d2; return FS*Math.sign(d); }
+// W-shaped floor: each half funnels to its nozzle, and a steep centre wedge stops rings balancing on the middle
+const RIDGE_W = 1.6, RIDGE_S = 0.9;
+function floorAt(x){ const d1=x-NOZ[0].x, d2=x-NOZ[1].x; const d=Math.abs(d1)<Math.abs(d2)?d1:d2;
+  const c=Math.abs(x-W/2); return FLOOR0+FS*Math.abs(d)+(c<RIDGE_W?RIDGE_S*(RIDGE_W-c):0); }
+function floorSlope(x){ const d1=x-NOZ[0].x, d2=x-NOZ[1].x; const d=Math.abs(d1)<Math.abs(d2)?d1:d2;
+  const c=x-W/2; return FS*Math.sign(d)+(Math.abs(c)<RIDGE_W?-RIDGE_S*Math.sign(c):0); }
 
 // ---------- fluid grid ----------
 const CS = 0.25, NX = 48, NY = 64, NC = NX*NY;
@@ -153,9 +176,9 @@ const p = new Float32Array(NC), dv = new Float32Array(NC), curl = new Float32Arr
 const solid = new Uint8Array(NC);
 for (let j=0;j<NY;j++) for (let i=0;i<NX;i++){
   const x=(i+.5)*CS, y=(j+.5)*CS; let s = y < floorAt(x)-0.05;
-  for (const pg of PEGS) if (Math.abs(x-pg.x) < PED_R && y < pg.col-0.05) s = true;
   solid[i+j*NX] = s ? 1 : 0;
 }
+const solidRings = solid.slice(), solidBalls = solid.slice();
 let _u=0,_v=0;
 function vel(x,y){
   let gx=x/CS-.5, gy=y/CS-.5;
@@ -307,7 +330,7 @@ function prep(r){
   r.Fx=r.Fy=r.Fz=r.Tx=r.Ty=r.Tz=0;
 }
 let clickBudget=0, quiet=false;
-function contact(A,px,py,pz,nx,ny,nz,pen,k,B){
+function contact(A,px,py,pz,nx,ny,nz,pen,k,B,mu){
   const ax=px-nx*TR, ay=py-ny*TR, az=pz-nz*TR;
   const rx=ax-A.x, ry=ay-A.y, rz=az-A.z;
   let vx=A.vx+(A.wy*rz-A.wz*ry), vy=A.vy+(A.wz*rx-A.wx*rz), vz=A.vz+(A.wx*ry-A.wy*rx);
@@ -318,7 +341,7 @@ function contact(A,px,py,pz,nx,ny,nz,pen,k,B){
   const fn=k*pen-CD*vn; if (fn<=0) return;
   let fx=fn*nx, fy=fn*ny, fz=fn*nz;
   const tx=vx-vn*nx, ty=vy-vn*ny, tz=vz-vn*nz, vt=Math.hypot(tx,ty,tz);
-  if (vt>1e-6){ const ft=Math.min(MU*fn,CF*vt)/vt; fx-=ft*tx; fy-=ft*ty; fz-=ft*tz; }
+  if (vt>1e-6){ const ft=Math.min((mu||MU)*fn,CF*vt)/vt; fx-=ft*tx; fy-=ft*ty; fz-=ft*tz; }
   A.Fx+=fx; A.Fy+=fy; A.Fz+=fz; A.Tx+=ry*fz-rz*fy; A.Ty+=rz*fx-rx*fz; A.Tz+=rx*fy-ry*fx;
   if (B){ B.Fx-=fx; B.Fy-=fy; B.Fz-=fz; B.Tx-=by*fz-bz*fy; B.Ty-=bz*fx-bx*fz; B.Tz-=bx*fy-by*fx;
     if (vn<-7 && !quiet) clickSound(-vn); }
@@ -363,7 +386,7 @@ function staticContacts(r){
     if (pz>DZ-TR) contact(r,px,py,pz,0,0,-1,pz-(DZ-TR),K);
     if (py>H-TR) contact(r,px,py,pz,0,-1,0,py-(H-TR),K);
     const f=floorAt(px), sl=floorSlope(px), inv=1/Math.sqrt(1+sl*sl), d=(py-f)*inv;
-    if (d<TR) contact(r,px,py,pz,-sl*inv,inv,0,TR-d,K);
+    if (d<TR) contact(r,px,py,pz,-sl*inv,inv,0,TR-d,K,null,MU_FLOOR);
     for (const pg of PEGS){
       const dx=px-pg.x; if (Math.abs(dx)>COL_R+0.6) continue;
       // shaft, pointed at the tip
@@ -373,20 +396,22 @@ function staticContacts(r){
         const ey=py-qy, dd=Math.hypot(dx,ey,pz);
         if (dd<TR+pr && dd>1e-6) contact(r,px,py,pz,dx/dd,ey/dd,pz/dd,TR+pr-dd,K);
       }
-      // pedestal
-      if (py<pg.col+0.4){
-        const qy=Math.min(pg.col-COL_T,py), ey=py-qy, dd=Math.hypot(dx,ey,pz);
-        if (dd<TR+PED_R && dd>1e-6) contact(r,px,py,pz,dx/dd,ey/dd,pz/dd,TR+PED_R-dd,K);
-      }
-      // collar disk
-      const rho=Math.hypot(dx,pz), dy=py-pg.col;
+      // support arm: runs from the back wall to the platform, so the floor stays clear
+      { const ay=coneUnder(pg)-ARM_R, qz=Math.max(-DZ,Math.min(0,pz)), ey=py-ay, ez=pz-qz, dd=Math.hypot(dx,ey,ez);
+        if (dd<TR+ARM_R && dd>1e-6) contact(r,px,py,pz,dx/dd,ey/dd,ez/dd,TR+ARM_R-dd,K); }
+      // cone platform
+      const rho=Math.hypot(dx,pz), yU=coneUnder(pg), yE=coneEdge(pg);
       if (rho<=COL_R){
-        const dd=Math.abs(dy)-COL_T;
-        if (dd<TR) contact(r,px,py,pz,0,dy>=0?1:-1,0,TR-dd,K);
+        const ys=coneTop(pg)-CONE_S*rho;
+        if (py>=(ys+yU)/2){
+          const inv=1/Math.sqrt(1+CONE_S*CONE_S), d=(py-ys)*inv;
+          if (d<TR){ const ox=rho>1e-4?dx/rho:0, oz=rho>1e-4?pz/rho:0;
+            contact(r,px,py,pz,CONE_S*ox*inv,inv,CONE_S*oz*inv,TR-d,K,null,MU_CONE); }
+        } else if (yU-py<TR) contact(r,px,py,pz,0,-1,0,TR-(yU-py),K);
       } else {
-        const s=COL_R/rho, qx=pg.x+dx*s, qz=pz*s, qy=pg.col+Math.max(-COL_T,Math.min(COL_T,dy));
+        const s=COL_R/rho, qx=pg.x+dx*s, qz=pz*s, qy=Math.max(yU,Math.min(yE,py));
         const ex=px-qx, ey=py-qy, ez=pz-qz, dd=Math.hypot(ex,ey,ez);
-        if (dd<TR && dd>1e-6) contact(r,px,py,pz,ex/dd,ey/dd,ez/dd,TR-dd,K);
+        if (dd<TR && dd>1e-6) contact(r,px,py,pz,ex/dd,ey/dd,ez/dd,TR-dd,K,null,MU_CONE);
       }
     }
   }
@@ -434,7 +459,7 @@ function threaded(r){
   for (let i=0;i<PEGS.length;i++){
     const pg=PEGS[i], dx=pg.x-r.x, dz=-r.z;
     const ys=r.y-(dx*r.nx+dz*r.nz)/r.ny;
-    if (Math.hypot(dx,ys-r.y,dz)<R-0.08 && ys>pg.col-0.3 && ys<pg.tip-0.2) return i;
+    if (Math.hypot(dx,ys-r.y,dz)<R-0.08 && ys>pg.col-0.9 && ys<pg.tip-0.2) return i;
   }
   return -1;
 }
@@ -575,37 +600,160 @@ function chime(big){
     o.connect(g); g.connect(master); o.start(st); o.stop(st+0.55); });
 }
 
+
+// ---------- balls & buckets ----------
+const BR = 0.36, BKR = 1.0, BWT = 0.05;
+const BUCKETS = [{ x: 3.9, yb: 6.2, yt: 7.9 }, { x: W - 3.9, yb: 6.2, yt: 7.9 }];
+const FLOOR_PTS = [0, NOZ[0].x, W/2-RIDGE_W, W/2, W/2+RIDGE_W, NOZ[1].x, W].map(x=>[x, floorAt(x)]);
+for (let j=0;j<NY;j++) for (let i=0;i<NX;i++){
+  const x=(i+.5)*CS, y=(j+.5)*CS;
+  for (const bk of BUCKETS){
+    const ax=Math.abs(x-bk.x);
+    if ((ax<BKR+0.1 && Math.abs(y-bk.yb)<0.14) || (Math.abs(ax-BKR)<0.14 && y>bk.yb && y<bk.yt)) solidBalls[i+j*NX]=1;
+  }
+}
+let balls=[];
+function makeBall(x,y,z,col){ return {x,y,z,vx:0,vy:0,vz:0,Fx:0,Fy:0,Fz:0,col,sa:Math.random()*6.28,sd:0,hookT:0,hooked:false}; }
+function ballContact(A,nx,ny,nz,pen,k,B,mu){
+  let vx=A.vx, vy=A.vy, vz=A.vz; if (B){ vx-=B.vx; vy-=B.vy; vz-=B.vz; }
+  const vn=vx*nx+vy*ny+vz*nz, fn=k*pen-CD*0.8*vn; if (fn<=0) return;
+  let fx=fn*nx, fy=fn*ny, fz=fn*nz;
+  const tx=vx-vn*nx, ty=vy-vn*ny, tz=vz-vn*nz, vt=Math.hypot(tx,ty,tz);
+  if (vt>1e-6){ const ft=Math.min((mu||0.3)*fn,CF*vt)/vt; fx-=ft*tx; fy-=ft*ty; fz-=ft*tz; }
+  A.Fx+=fx; A.Fy+=fy; A.Fz+=fz;
+  if (B){ B.Fx-=fx; B.Fy-=fy; B.Fz-=fz; if (vn<-7 && !quiet) clickSound(-vn); }
+  else if (vn<-12 && !quiet) clickSound(-vn*0.6);
+}
+function ballPoint(A,qx,qy,qz,rad,mu){
+  const ex=A.x-qx, ey=A.y-qy, ez=A.z-qz, d=Math.hypot(ex,ey,ez);
+  if (d<rad && d>1e-6) ballContact(A,ex/d,ey/d,ez/d,rad-d,K,null,mu);
+}
+function inBucket(b){
+  for (let i=0;i<BUCKETS.length;i++){ const bk=BUCKETS[i];
+    if (Math.hypot(b.x-bk.x,b.z)<BKR-0.05 && b.y>bk.yb && b.y<bk.yt+0.15) return i; }
+  return -1;
+}
+function ballsStep(h){
+  for (const b of balls){
+    b.Fx=b.Fy=b.Fz=0;
+    const sub=b.x*upx+b.y*upy<surfS, g=sub?G_W*1.25:G_A;
+    b.Fx+=g*gdx; b.Fy+=g*gdy;
+    if (sub){ vel(b.x,b.y); const lx=_u-b.vx, ly=_v-b.vy, lz=-b.vz, m=Math.hypot(lx,ly,lz), c=Math.min(2.2+0.9*m,150);
+      b.Fx+=c*lx; b.Fy+=c*ly; b.Fz+=c*lz; }
+    else { b.Fx-=0.3*b.vx; b.Fy-=0.3*b.vy; b.Fz-=0.3*b.vz; }
+    if (b.x<BR) ballContact(b,1,0,0,BR-b.x,K); if (b.x>W-BR) ballContact(b,-1,0,0,b.x-(W-BR),K);
+    if (b.z<-DZ+BR) ballContact(b,0,0,1,-DZ+BR-b.z,K); if (b.z>DZ-BR) ballContact(b,0,0,-1,b.z-(DZ-BR),K);
+    if (b.y>H-BR) ballContact(b,0,-1,0,b.y-(H-BR),K);
+    for (let i=0;i<FLOOR_PTS.length-1;i++){
+      const a=FLOOR_PTS[i], c=FLOOR_PTS[i+1]; if (b.x<a[0]-BR||b.x>c[0]+BR) continue;
+      const ex=c[0]-a[0], ey=c[1]-a[1], t=Math.max(0,Math.min(1,((b.x-a[0])*ex+(b.y-a[1])*ey)/(ex*ex+ey*ey)));
+      // centre below the floor line counts as inside the floor
+      const cross=(ex*(b.y-a[1])-ey*(b.x-a[0]));
+      if (cross<0){ if (b.x>=a[0] && b.x<=c[0]){ const l=Math.hypot(ex,ey); ballContact(b,-ey/l,ex/l,0,BR-cross/l,K,null,MU_FLOOR); } }
+      else ballPoint(b,a[0]+ex*t,a[1]+ey*t,b.z,BR,MU_FLOOR);
+    }
+    for (const bk of BUCKETS){
+      const dx=b.x-bk.x, dz=b.z, rho=Math.hypot(dx,dz); if (rho>BKR+1||b.y<bk.yb-1||b.y>bk.yt+1) continue;
+      if (rho>1e-5){ const s=BKR/rho; ballPoint(b,bk.x+dx*s,Math.max(bk.yb,Math.min(bk.yt,b.y)),dz*s,BR+BWT,0.2); }
+      const k2=rho>BKR?BKR/rho:1; ballPoint(b,bk.x+dx*k2,bk.yb,dz*k2,BR+BWT,0.3);
+    }
+  }
+  for (let a=0;a<balls.length;a++) for (let c=a+1;c<balls.length;c++){
+    const A=balls[a], B=balls[c], ex=A.x-B.x, ey=A.y-B.y, ez=A.z-B.z, d=Math.hypot(ex,ey,ez);
+    if (d<2*BR && d>1e-6) ballContact(A,ex/d,ey/d,ez/d,2*BR-d,K,B,0.25);
+  }
+  for (const b of balls){
+    b.vx+=b.Fx*h; b.vy+=b.Fy*h; b.vz+=b.Fz*h;
+    const sp=Math.hypot(b.vx,b.vy,b.vz); if (sp>VMAX){ const s=VMAX/sp; b.vx*=s; b.vy*=s; b.vz*=s; }
+    b.x+=b.vx*h; b.y+=b.vy*h; b.z+=b.vz*h;
+    b.sa+=Math.hypot(b.vx,b.vy)*h/BR; if (Math.hypot(b.vx,b.vy)>0.5) b.sd=Math.atan2(-b.vy,b.vx)+Math.PI/2;
+    if (!(Number.isFinite(b.x)&&Number.isFinite(b.y)) || b.x<-1||b.x>W+1||b.y<-1||b.y>H+2||Math.abs(b.z)>DZ+1)
+      Object.assign(b, makeBall(1.6+Math.random()*0.5, 2.5, 0, b.col));
+  }
+}
+function drawBall(b){
+  const X=b.x, Y=PY(b.y,b.z), c=RC[b.col];
+  const gr=ctx.createRadialGradient(X-BR*0.35,Y-BR*0.42,BR*0.05,X,Y,BR);
+  gr.addColorStop(0,fogCol(c,1.1,b.z,80)); gr.addColorStop(0.45,fogCol(c,0.96,b.z,0)); gr.addColorStop(1,fogCol(c,0.48,b.z,0));
+  ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(X,Y,BR,0,Math.PI*2); ctx.fill();
+  // moulding seam turns as the ball rolls
+  const cs=Math.cos(b.sa), sn=Math.sin(b.sa);
+  ctx.save(); ctx.translate(X,Y); ctx.rotate(b.sd);
+  ctx.strokeStyle='rgba(255,255,255,0.32)'; ctx.lineWidth=0.035;
+  ctx.beginPath(); ctx.ellipse(0,0,BR*0.96,BR*0.96*Math.abs(cs)+0.001,0,sn>0?0:Math.PI,sn>0?Math.PI:2*Math.PI); ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle='rgba(255,255,255,0.75)'; ctx.beginPath(); ctx.ellipse(X-BR*0.36,Y-BR*0.42,BR*0.2,BR*0.13,-0.6,0,Math.PI*2); ctx.fill();
+}
+function drawBucketBack(bk){
+  const x=bk.x, yT=PY(bk.yt,0), yB=PY(bk.yb,0), rx=BKR, ry=BKR*SB;
+  ctx.fillStyle='#8fb9c1'; ctx.fillRect(x-0.28,PY(bk.yb,-DZ)-0.05,0.56,PY(bk.yb,0)-PY(bk.yb,-DZ)+0.1);
+  ctx.beginPath(); ctx.ellipse(x,yT,rx,ry,0,Math.PI,2*Math.PI); ctx.lineTo(x+rx,yB); ctx.ellipse(x,yB,rx,ry,0,0,Math.PI); ctx.closePath();
+  ctx.fillStyle='rgba(255,105,70,0.24)'; ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x,yB,rx,ry,0,0,Math.PI*2); ctx.fillStyle='rgba(255,120,85,0.35)'; ctx.fill();
+  ctx.strokeStyle='rgba(255,170,140,0.9)'; ctx.lineWidth=0.06; ctx.beginPath(); ctx.ellipse(x,yT,rx,ry,0,Math.PI,2*Math.PI); ctx.stroke();
+}
+function drawBucketFront(bk){
+  const x=bk.x, yT=PY(bk.yt,0), yB=PY(bk.yb,0), rx=BKR, ry=BKR*SB;
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(x,yT,rx,ry,0,0,Math.PI); ctx.lineTo(x-rx,yB); ctx.ellipse(x,yB,rx,ry,0,Math.PI,0,true); ctx.closePath();
+  const gr=ctx.createLinearGradient(x-rx,0,x+rx,0);
+  gr.addColorStop(0,'rgba(220,60,40,0.6)'); gr.addColorStop(0.25,'rgba(255,120,90,0.22)'); gr.addColorStop(0.7,'rgba(255,110,80,0.18)'); gr.addColorStop(1,'rgba(200,50,35,0.6)');
+  ctx.fillStyle=gr; ctx.fill(); ctx.clip();
+  ctx.fillStyle='rgba(255,255,255,0.28)'; ctx.fillRect(x-rx*0.62,yT-1,0.16,yB-yT+2);
+  ctx.fillStyle='rgba(255,255,255,0.12)'; ctx.fillRect(x-rx*0.38,yT-1,0.07,yB-yT+2);
+  ctx.strokeStyle='rgba(255,200,180,0.35)'; ctx.lineWidth=0.04;
+  for (const f of [0.35,0.68]){ const yy=yT+(yB-yT)*f; ctx.beginPath(); ctx.ellipse(x,yy,rx,ry,0,0,Math.PI); ctx.stroke(); }
+  ctx.restore();
+  ctx.strokeStyle='rgba(190,45,30,0.75)'; ctx.lineWidth=0.04;
+  ctx.beginPath(); ctx.moveTo(x-rx,yT); ctx.lineTo(x-rx,yB); ctx.moveTo(x+rx,yT); ctx.lineTo(x+rx,yB); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(x,yB,rx,ry,0,0,Math.PI); ctx.stroke();
+  ctx.strokeStyle='#ff6a4a'; ctx.lineWidth=0.1; ctx.beginPath(); ctx.ellipse(x,yT,rx,ry,0,0,Math.PI); ctx.stroke();
+  ctx.strokeStyle='rgba(255,230,215,0.8)'; ctx.lineWidth=0.03; ctx.beginPath(); ctx.ellipse(x,yT-0.03,rx*0.96,ry,0,0.3,Math.PI-0.3); ctx.stroke();
+}
+
 // ---------- game ----------
 const $=id=>document.getElementById(id);
 let started=false, won=false, elapsed=0, allT=0, best=null, shakeAmp=0;
-try{ const b=parseFloat(localStorage.getItem('wrt-best')); if (b>0) best=b; }catch(e){}
+let mode='rings';
+try{ if (localStorage.getItem('wrt-mode')==='balls') mode='balls'; }catch(e){}
+const bestKey=()=>mode==='balls'?'wrt-best-balls':'wrt-best';
+function loadBest(){ best=null; try{ const b=parseFloat(localStorage.getItem(bestKey())); if (b>0) best=b; }catch(e){} }
+loadBest();
+const pieces=()=>mode==='balls'?balls:rings;
+const TXT={
+  rings:{lede:'Pump the jets, let the rings drift down, and hook all eight onto the two pegs.', of:'of 8 on the pegs', go:'Let them sink onto the pegs.', all:'All eight are on. Hold steady…', win:'on the pegs'},
+  balls:{lede:'Pump the jets, float the balls up, and drop all eight into the two buckets.', of:'of 8 in the buckets', go:'Drop them into the buckets.', all:'All eight are in. Hold steady…', win:'in the buckets'}
+};
 function fmt(t){ const m=Math.floor(t/60), s=t-m*60; return m+':'+(s<10?'0':'')+s.toFixed(1); }
 const tally=$('tally');
 RC.forEach(c=>{ const s=document.createElement('span'); s.style.setProperty('--c',`rgb(${c})`); tally.appendChild(s); });
 function newGame(){
-  rings=[];
+  rings=[]; balls=[];
+  solid.set(mode==='balls'?solidBalls:solidRings);
   for (let i=0;i<8;i++){
     const side=i%2, base=side?NOZ[1].x:NOZ[0].x;
-    rings.push(makeRing(base+(Math.random()-.5)*1.6*(side?-1:1)+(side?-0.3:0.3), 1.6+Math.floor(i/2)*1.05, (Math.random()-.5)*1.2, i));
+    if (mode==='balls') balls.push(makeBall(base+(Math.random()-.5)*1.2+(side?-0.4:0.4), 1.4+Math.floor(i/2)*0.8, (Math.random()-.5)*1.4, i));
+    else rings.push(makeRing(base+(Math.random()-.5)*1.6*(side?-1:1)+(side?-0.3:0.3), 1.6+Math.floor(i/2)*1.05, (Math.random()-.5)*1.2, i));
   }
   clearFluid(); bubbles=[];
-  quiet=true; for (let f=0;f<150;f++) for (let s=0;s<SUB;s++) ringsStep(1/60/SUB); quiet=false;
-  for (const r of rings){ r.hooked=false; r.hookT=0; }
+  quiet=true; for (let f=0;f<150;f++) for (let s=0;s<SUB;s++){ if (mode==='balls') ballsStep(1/60/SUB); else ringsStep(1/60/SUB); } quiet=false;
+  for (const r of pieces()){ r.hooked=false; r.hookT=0; }
   started=false; won=false; elapsed=0; allT=0;
   setStatus('Press a pump to start the clock.', false); updateHud(true);
 }
 function setStatus(t,w){ const s=$('status'); s.textContent=t; s.classList.toggle('win',!!w); }
 let lastCount=-1, hudT=0;
 function updateHud(force){
-  let c=0; rings.forEach((r,i)=>{ if(r.hooked)c++; tally.children[i].classList.toggle('on',r.hooked); });
+  let c=0; pieces().forEach((r,i)=>{ if(r.hooked)c++; tally.children[i].classList.toggle('on',r.hooked); });
   if (c!==lastCount||force){ $('onPegs').textContent=c; lastCount=c; }
   $('time').textContent=fmt(elapsed);
   $('best').textContent=best?fmt(best):'–';
 }
 function gameStep(dt){
   let c=0;
-  for (const r of rings){
-    const on = threaded(r)>=0;
+  const P=pieces();
+  for (const r of P){
+    const on = mode==='balls' ? inBucket(r)>=0 : threaded(r)>=0;
     r.hookT = on ? r.hookT+dt : 0;
     if (r.hookT>0.35 && !r.hooked){ r.hooked=true; if (started&&!won) chime(false); }
     else if (r.hookT===0 && r.hooked) r.hooked=false;
@@ -613,16 +761,23 @@ function gameStep(dt){
   }
   if (started && !won){
     elapsed+=dt;
-    allT = c===rings.length ? allT+dt : 0;
+    allT = c===P.length ? allT+dt : 0;
     if (allT>1){
       won=true; let nb=false;
-      if (!best || elapsed<best){ best=elapsed; nb=true; try{ localStorage.setItem('wrt-best',String(best)); }catch(e){} }
-      setStatus(`All 8 on the pegs in ${fmt(elapsed)}.${nb?' New best.':''}`, true); chime(true);
+      if (!best || elapsed<best){ best=elapsed; nb=true; try{ localStorage.setItem(bestKey(),String(best)); }catch(e){} }
+      setStatus(`All 8 ${TXT[mode].win} in ${fmt(elapsed)}.${nb?' New best.':''}`, true); chime(true);
       pumps.forEach(pm=>{ pm.acc=0; });
       for (let i=0;i<60;i++){ const N=NOZ[i%2]; bubbles.push({x:N.x,y:FLOOR0+0.2,z:(Math.random()-.5)*.6,r:0.03+Math.random()*0.08,jx:N.dx*40,jy:N.dy*(30+Math.random()*60),ph:Math.random()*6}); }
-    } else if (c>0 && !won) setStatus(c===rings.length?'All eight are on. Hold steady…':`${rings.length-c} to go. Let them sink onto the pegs.`, false);
+    } else if (c>0 && !won) setStatus(c===P.length?TXT[mode].all:`${P.length-c} to go. ${TXT[mode].go}`, false);
   }
   hudT+=dt; if (hudT>0.1){ hudT=0; updateHud(false); }
+}
+function setMode(m){
+  mode=m; try{ localStorage.setItem('wrt-mode',m); }catch(e){}
+  $('modeRings').setAttribute('aria-pressed',String(m==='rings')); $('modeBalls').setAttribute('aria-pressed',String(m==='balls'));
+  $('lede').textContent=TXT[m].lede; $('ofText').textContent=TXT[m].of;
+  tally.classList.toggle('balls',m==='balls');
+  loadBest(); if (shellLayer) buildShell(); newGame();
 }
 function press(n){ ensureAudio(); pumps[n].hold++; if (!started && !won){ started=true; setStatus('Clock running.', false);} }
 function release(n){ pumps[n].hold=Math.max(0,pumps[n].hold-1); }
@@ -636,8 +791,8 @@ function shake(){
       if (d<rad && d>1e-3){ const f=str*(1-d/rad); u[k]+=-dy/d*f; v[k]+=dx/d*f; }
     }
   }
-  for (const r of rings){ r.vx+=(Math.random()-.5)*14; r.vy+=Math.random()*10; r.vz+=(Math.random()-.5)*6;
-    r.Lx+=(Math.random()-.5)*2; r.Lz+=(Math.random()-.5)*2; }
+  for (const r of pieces()){ r.vx+=(Math.random()-.5)*14; r.vy+=Math.random()*10; r.vz+=(Math.random()-.5)*6;
+    if (r.Lx!==undefined){ r.Lx+=(Math.random()-.5)*2; r.Lz+=(Math.random()-.5)*2; } }
   shakeAmp=1; if (!started && !won){ started=true; setStatus('Clock running.', false);} clickSound(40);
 }
 
@@ -689,7 +844,7 @@ function buildBackdrop(){
     g.beginPath(); g.ellipse(0,0,0.9,0.38,0,0,Math.PI*2); g.fill(); g.beginPath(); g.moveTo(0.75,0); g.lineTo(1.35,-0.38); g.lineTo(1.35,0.38); g.closePath(); g.fill();
     g.fillStyle='rgba(180,230,245,0.45)'; g.beginPath(); g.arc(-0.5,-0.08,0.08,0,Math.PI*2); g.fill(); g.restore(); };
   // molded floor insert: top surface + front face
-  const xs=[0,NOZ[0].x,W/2,NOZ[1].x,W];
+  const xs=[0,NOZ[0].x,W/2-RIDGE_W,W/2,W/2+RIDGE_W,NOZ[1].x,W];
   g.beginPath(); xs.forEach((x,i)=>{ const Y=H-floorAt(x)-2*DZ*SB; i?g.lineTo(x,Y):g.moveTo(x,Y); });
   for (let i=xs.length-1;i>=0;i--) g.lineTo(xs[i],H-floorAt(xs[i])); g.closePath();
   gr=g.createLinearGradient(0,H-2.6,0,H); gr.addColorStop(0,'#e4f4f2'); gr.addColorStop(1,'#bfe0e1'); g.fillStyle=gr; g.fill();
@@ -749,8 +904,9 @@ function buildShell(){
   g.fillText('W A T E R   G A M E', W/2, H+1.85);
   g.font='1.05px Chango, "Arial Black", Impact, sans-serif'; g.lineJoin='round';
   g.strokeStyle='#6e0a0d'; g.lineWidth=0.14;
-  g.strokeText('RING', W/2, H+3.05); g.fillStyle='#ffd21f'; g.fillText('RING', W/2, H+3.05);
-  g.strokeText('TOSS', W/2, H+4.35); g.fillText('TOSS', W/2, H+4.35);
+  const L1=mode==='balls'?'BALL':'RING', L2=mode==='balls'?'DROP':'TOSS';
+  g.strokeText(L1, W/2, H+3.05); g.fillStyle='#ffd21f'; g.fillText(L1, W/2, H+3.05);
+  g.strokeText(L2, W/2, H+4.35); g.fillText(L2, W/2, H+4.35);
   g.restore();
   // button recesses
   for (const x of BX){
@@ -824,19 +980,23 @@ function drawSeg(r,idx,i){
   }
 }
 function drawPedestal(pg){
-  const x=pg.x, yTop=PY(pg.col,0), yBot=PY(floorAt(x),0)+0.08;
-  let gr=ctx.createLinearGradient(x-PED_R,0,x+PED_R,0);
-  gr.addColorStop(0,'#7fa5ae'); gr.addColorStop(0.35,'#eef7f7'); gr.addColorStop(0.6,'#d3e6e8'); gr.addColorStop(1,'#6e97a1');
-  ctx.fillStyle=gr; ctx.fillRect(x-PED_R,yTop,2*PED_R,yBot-yTop);
-  ctx.beginPath(); ctx.ellipse(x,yBot,PED_R*1.6,PED_R*1.6*SB+0.04,0,0,Math.PI*2); ctx.fillStyle='#9cc4ca'; ctx.fill();
-  // collar: side band then top face
-  const yT=PY(pg.col+COL_T,0), yB=PY(pg.col-COL_T,0), ry=COL_R*SB;
-  ctx.beginPath(); ctx.ellipse(x,yB,COL_R,ry,0,0,Math.PI); ctx.lineTo(x-COL_R,yT); ctx.ellipse(x,yT,COL_R,ry,0,Math.PI,0,true); ctx.closePath();
+  const x=pg.x, ay=coneUnder(pg)-ARM_R;
+  // mounting plate on the back panel, then the arm reaching forward to the platform
+  ctx.beginPath(); rr(ctx,x-0.55,PY(ay,-DZ)-0.45,1.1,0.9,0.18); ctx.fillStyle='#8fb9c1'; ctx.fill();
+  ctx.strokeStyle='rgba(30,80,95,0.35)'; ctx.lineWidth=0.03; ctx.stroke();
+  let gr=ctx.createLinearGradient(x-ARM_R,0,x+ARM_R,0);
+  gr.addColorStop(0,'#7fa5ae'); gr.addColorStop(0.4,'#eef7f7'); gr.addColorStop(1,'#6e97a1');
+  ctx.fillStyle=gr; ctx.fillRect(x-ARM_R,PY(ay,-DZ),2*ARM_R,PY(ay,0)-PY(ay,-DZ));
+  ctx.beginPath(); ctx.ellipse(x,PY(ay,0),ARM_R,ARM_R,0,0,Math.PI*2); ctx.fill();
+  // cone platform: rim band, then the sloping top rising to the needle
+  const yE=PY(coneEdge(pg),0), yB=PY(coneUnder(pg),0), yA=PY(coneTop(pg),0), ry=COL_R*SB;
+  ctx.beginPath(); ctx.ellipse(x,yB,COL_R,ry,0,0,Math.PI); ctx.lineTo(x-COL_R,yE); ctx.ellipse(x,yE,COL_R,ry,0,Math.PI,0,true); ctx.closePath();
   gr=ctx.createLinearGradient(x-COL_R,0,x+COL_R,0); gr.addColorStop(0,'#86aab3'); gr.addColorStop(0.4,'#f4fbfb'); gr.addColorStop(1,'#78a0aa');
   ctx.fillStyle=gr; ctx.fill();
-  ctx.beginPath(); ctx.ellipse(x,yT,COL_R,ry,0,0,Math.PI*2);
-  gr=ctx.createLinearGradient(0,yT-ry,0,yT+ry); gr.addColorStop(0,'#cfe3e6'); gr.addColorStop(1,'#f7fdfd'); ctx.fillStyle=gr; ctx.fill();
-  ctx.strokeStyle='rgba(40,90,105,0.35)'; ctx.lineWidth=0.03; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x-COL_R,yE); ctx.lineTo(x,yA); ctx.lineTo(x+COL_R,yE); ctx.ellipse(x,yE,COL_R,ry,0,0,Math.PI); ctx.closePath();
+  gr=ctx.createLinearGradient(x-COL_R,yA,x+COL_R,yE+ry); gr.addColorStop(0,'#f7fdfd'); gr.addColorStop(0.55,'#d9ebee'); gr.addColorStop(1,'#a9c8ce');
+  ctx.fillStyle=gr; ctx.fill();
+  ctx.strokeStyle='rgba(40,90,105,0.35)'; ctx.lineWidth=0.03; ctx.beginPath(); ctx.ellipse(x,yE,COL_R,ry,0,0,Math.PI); ctx.stroke();
 }
 function drawShaft(pg){
   const x=pg.x, yb=PY(pg.col+COL_T,0), yk=PY(pg.tip-0.55,0), yt=PY(pg.tip,0);
@@ -870,13 +1030,21 @@ function render(t){
     ctx.beginPath();
     for (let i=0;i<=NSEG;i++){ const dd=Z[i]+DZ; const xx=X[i]+dd*0.18, yy=PY(YW[i],-DZ)+dd*0.42; i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy); }
     ctx.stroke(); });
+  for (const b of balls){ const d=b.z+DZ;
+    ctx.fillStyle=`rgba(3,35,55,${(0.22-d*0.05).toFixed(3)})`; ctx.beginPath(); ctx.arc(b.x+d*0.18,PY(b.y,-DZ)+d*0.42,BR*(1+d*0.12),0,Math.PI*2); ctx.fill(); }
   // specks
   ctx.fillStyle='rgba(235,250,255,0.9)';
   for (const s of specks){ ctx.globalAlpha=s.a; ctx.fillRect(s.x,PY(s.y,s.z),0.035,0.035); }
   ctx.globalAlpha=1;
   // depth-ordered rings and pegs
+  if (mode==='balls'){
+    for (const bk of BUCKETS) drawBucketBack(bk);
+    const order=balls.slice().sort((a,b)=>a.z-b.z);
+    for (const b of order) drawBall(b);
+    for (const bk of BUCKETS) drawBucketFront(bk);
+  } else {
   segBack.length=0; segMid.length=0; segFront.length=0;
-  const colTop=PEGS[0].col+COL_T-0.02;
+  const colTop=coneUnder(PEGS[0]);
   rings.forEach((r,idx)=>{ const Z=RZ[idx], YW=RYW[idx];
     for (let i=0;i<NSEG;i++){ const z=(Z[i]+Z[i+1])/2, y=(YW[i]+YW[i+1])/2, key=z*1000+idx*NSEG+i;
       if (z>=0) segFront.push([z,idx,i]); else if (y>colTop) segMid.push([z,idx,i]); else segBack.push([z,idx,i]); } });
@@ -887,6 +1055,7 @@ function render(t){
   for (const s of segMid) drawSeg(rings[s[1]],s[1],s[2]);
   for (const pg of PEGS) drawShaft(pg);
   for (const s of segFront) drawSeg(rings[s[1]],s[1],s[2]);
+  }
   // bubbles
   for (const b of bubbles){
     const X=b.x, Y=PY(b.y,b.z);
@@ -979,7 +1148,7 @@ const reduceMotion=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduc
 function step(dt){
   updateTilt(dt); updatePumps(dt); computeSurface();
   fluidStep(dt);
-  for (let s=0;s<SUB;s++) ringsStep(dt/SUB);
+  for (let s=0;s<SUB;s++){ if (mode==='balls') ballsStep(dt/SUB); else ringsStep(dt/SUB); }
   particles(dt); fishStep(dt); gameStep(dt); audioFrame();
   shakeAmp*=Math.exp(-dt*7);
 }
@@ -996,9 +1165,11 @@ initFish();
 resize();
 new ResizeObserver(()=>resize()).observe(cv);
 if (document.fonts&&document.fonts.ready) document.fonts.ready.then(()=>buildLayers());
-newGame();
+$('modeRings').addEventListener('click',()=>{ ensureAudio(); if (mode!=='rings') setMode('rings'); });
+$('modeBalls').addEventListener('click',()=>{ ensureAudio(); if (mode!=='balls') setMode('balls'); });
+setMode(mode);
 requestAnimationFrame(frame);
 })();
 </script>
-
-</body></html>
+</body>
+</html>
